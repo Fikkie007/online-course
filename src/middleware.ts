@@ -1,44 +1,115 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-// Simple in-memory rate limiting (for production, use Redis)
-const rateLimit = new Map<string, { count: number; lastRequest: number }>();
+// Rate limiting configuration
 const RATE_LIMIT_WINDOW = 60000; // 1 minute
 const RATE_LIMIT_MAX = 100; // 100 requests per minute
 
-function isRateLimited(ip: string): boolean {
-  const now = Date.now();
-  const entry = rateLimit.get(ip);
+// Use Redis for production, fallback to in-memory for development
+let redisClient: any = null;
 
-  if (!entry) {
-    rateLimit.set(ip, { count: 1, lastRequest: now });
+async function getRedisClient() {
+  if (!redisClient && process.env.REDIS_URL) {
+    try {
+      const Redis = require('ioredis');
+      redisClient = new Redis(process.env.REDIS_URL);
+    } catch (e) {
+      console.warn('Redis connection failed, using in-memory rate limiting');
+    }
+  }
+  return redisClient;
+}
+
+// In-memory fallback for rate limiting
+const memoryRateLimit = new Map<string, { count: number; lastRequest: number }>();
+
+async function isRateLimited(ip: string): Promise<boolean> {
+  const redis = await getRedisClient();
+
+  if (redis) {
+    // Use Redis for distributed rate limiting
+    const key = `ratelimit:${ip}`;
+    const current = await redis.incr(key);
+
+    if (current === 1) {
+      await redis.expire(key, Math.ceil(RATE_LIMIT_WINDOW / 1000));
+    }
+
+    return current > RATE_LIMIT_MAX;
+  } else {
+    // Fallback to in-memory rate limiting
+    const now = Date.now();
+    const entry = memoryRateLimit.get(ip);
+
+    if (!entry) {
+      memoryRateLimit.set(ip, { count: 1, lastRequest: now });
+      return false;
+    }
+
+    if (now - entry.lastRequest > RATE_LIMIT_WINDOW) {
+      memoryRateLimit.set(ip, { count: 1, lastRequest: now });
+      return false;
+    }
+
+    if (entry.count >= RATE_LIMIT_MAX) {
+      return true;
+    }
+
+    entry.count++;
+    entry.lastRequest = now;
     return false;
   }
+}
 
-  if (now - entry.lastRequest > RATE_LIMIT_WINDOW) {
-    rateLimit.set(ip, { count: 1, lastRequest: now });
-    return false;
-  }
+// Security headers configuration
+const securityHeaders = {
+  // Prevent MIME type sniffing
+  'X-Content-Type-Options': 'nosniff',
+  // Prevent clickjacking
+  'X-Frame-Options': 'DENY',
+  // XSS protection (legacy but still useful for older browsers)
+  'X-XSS-Protection': '1; mode=block',
+  // Referrer policy
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  // Permissions policy (restrict browser features)
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), interest-cohort=()',
+  // Content Security Policy - adjust as needed for your app
+  'Content-Security-Policy': [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://app.sandbox.midtrans.com https://app.midtrans.com",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: https: blob:",
+    "font-src 'self' data:",
+    "connect-src 'self' https://api.sandbox.midtrans.com https://api.midtrans.com https://www.google.com",
+    "frame-src https://app.sandbox.midtrans.com https://app.midtrans.com",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ].join('; '),
+};
 
-  if (entry.count >= RATE_LIMIT_MAX) {
-    return true;
-  }
-
-  entry.count++;
-  entry.lastRequest = now;
-  return false;
+// Add HSTS in production
+if (process.env.NODE_ENV === 'production') {
+  (securityHeaders as any)['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains; preload';
 }
 
 export async function middleware(request: NextRequest) {
-  const ip = request.headers.get('x-forwarded-for') || request.ip || 'unknown';
+  const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+             request.headers.get('x-real-ip') ||
+             request.ip ||
+             'unknown';
 
   // Rate limiting for API routes
   if (request.nextUrl.pathname.startsWith('/api')) {
-    if (isRateLimited(ip)) {
-      return NextResponse.json(
-        { error: 'Too many requests' },
-        { status: 429 }
-      );
+    // Skip rate limiting for webhooks (they have their own verification)
+    if (!request.nextUrl.pathname.startsWith('/api/webhooks')) {
+      if (await isRateLimited(ip)) {
+        return NextResponse.json(
+          { error: 'Too many requests', message: 'Rate limit exceeded. Please try again later.' },
+          { status: 429, headers: { 'Retry-After': '60' } }
+        );
+      }
     }
   }
 
@@ -64,7 +135,12 @@ export async function middleware(request: NextRequest) {
     if (isAuthenticated) {
       return NextResponse.redirect(new URL('/student', request.url));
     }
-    return NextResponse.next();
+    const response = NextResponse.next();
+    // Add security headers
+    Object.entries(securityHeaders).forEach(([key, value]) => {
+      response.headers.set(key, value);
+    });
+    return response;
   }
 
   // Protected dashboard routes
@@ -73,25 +149,42 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL('/login', request.url));
     }
     // Role check will be done in the page component
-    return NextResponse.next();
+    const response = NextResponse.next();
+    Object.entries(securityHeaders).forEach(([key, value]) => {
+      response.headers.set(key, value);
+    });
+    return response;
   }
 
   if (pathname.startsWith('/mentor')) {
     if (!isAuthenticated) {
       return NextResponse.redirect(new URL('/login', request.url));
     }
-    return NextResponse.next();
+    const response = NextResponse.next();
+    Object.entries(securityHeaders).forEach(([key, value]) => {
+      response.headers.set(key, value);
+    });
+    return response;
   }
 
   if (pathname.startsWith('/student')) {
     if (!isAuthenticated) {
       return NextResponse.redirect(new URL('/login', request.url));
     }
-    return NextResponse.next();
+    const response = NextResponse.next();
+    Object.entries(securityHeaders).forEach(([key, value]) => {
+      response.headers.set(key, value);
+    });
+    return response;
   }
 
-  // Allow other routes
-  return NextResponse.next();
+  // Apply security headers to all responses
+  const response = NextResponse.next();
+  Object.entries(securityHeaders).forEach(([key, value]) => {
+    response.headers.set(key, value);
+  });
+
+  return response;
 }
 
 export const config = {

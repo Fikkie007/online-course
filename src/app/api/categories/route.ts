@@ -1,30 +1,47 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getCurrentUser, isAdmin } from '@/lib/auth';
+import { cached, CACHE_TTL, invalidateCache } from '@/lib/cache';
 
-// GET - List all categories
+// Cache key for categories
+const CATEGORIES_CACHE_KEY = 'categories:all';
+
+// GET - List all categories (public, cached)
 export async function GET(request: NextRequest) {
   try {
-    const supabase = createAdminClient();
-    const { searchParams } = new URL(request.url);
+    const searchParams = new URL(request.url).searchParams;
     const activeOnly = searchParams.get('active') === 'true';
+    const bypass = searchParams.get('bypass') === 'true';
 
-    let query = supabase
-      .from('categories')
-      .select('*')
-      .order('order_index', { ascending: true });
+    // Use cached wrapper for categories
+    const categories = await cached(
+      CATEGORIES_CACHE_KEY,
+      async () => {
+        const supabase = createAdminClient();
 
-    if (activeOnly) {
-      query = query.eq('is_active', true);
-    }
+        let query = supabase
+          .from('categories')
+          .select('*')
+          .order('order_index', { ascending: true });
 
-    const { data: categories, error } = await query;
+        // Note: is_active filter applied after cache if needed
+        const { data, error } = await query;
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
+        if (error) {
+          throw new Error(error.message);
+        }
 
-    return NextResponse.json({ success: true, data: categories });
+        return data || [];
+      },
+      { ttl: CACHE_TTL.CATEGORIES, bypass }
+    );
+
+    // Filter active if requested (done in-memory since we cache all)
+    const filteredCategories = activeOnly
+      ? categories.filter((c: any) => c.is_active !== false)
+      : categories;
+
+    return NextResponse.json({ success: true, data: filteredCategories });
   } catch (error) {
     console.error('Get categories error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
@@ -71,6 +88,9 @@ export async function POST(request: NextRequest) {
       }
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
+
+    // Invalidate categories cache after creation
+    await invalidateCache(CATEGORIES_CACHE_KEY);
 
     return NextResponse.json({ success: true, data: category });
   } catch (error) {

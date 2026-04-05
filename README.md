@@ -11,7 +11,8 @@ Platform kursus online dengan fitur lengkap untuk pembelajaran digital.
 - **WhatsApp**: Fonnte API
 - **Email**: Resend
 - **Queue**: BullMQ + Redis (Upstash)
-- **Security**: Google reCAPTCHA v3
+- **Testing**: Vitest with v8 coverage
+- **Security**: Google reCAPTCHA v3, bcrypt, CSP headers
 
 ## Features
 
@@ -23,8 +24,13 @@ Platform kursus online dengan fitur lengkap untuk pembelajaran digital.
   - Set password for Google users (enable email login)
 - 🛡️ **Security**
   - Google reCAPTCHA v3 protection
-  - Secure password hashing with bcrypt
-  - JWT session strategy
+  - Secure password hashing with bcrypt (12 rounds)
+  - JWT session strategy (24-hour expiry)
+  - Row Level Security (RLS) on database
+  - Content Security Policy (CSP) headers
+  - Rate limiting (100 req/min)
+  - Cryptographically secure certificate numbers
+  - XSS prevention in email templates
 
 ### Untuk Student
 - 📚 Jelajahi katalog kursus dengan filter kategori
@@ -89,6 +95,8 @@ Isi semua variable yang diperlukan (lihat section Environment Variables).
 8. `008_course_materials_storage.sql` - Storage bucket
 9. `009_add_password_auth.sql` - Email/password auth
 10. `010_password_reset_tokens.sql` - Reset password tokens
+11. `011_secure_rls_policies.sql` - **CRITICAL** Secure RLS policies (replaces 002)
+12. `012_performance_indexes.sql` - **RECOMMENDED** Composite indexes for performance
 
 3. Copy project URL dan keys ke `.env.local`
 
@@ -142,6 +150,15 @@ npm start
 
 # Jalankan queue worker (membutuhkan Redis)
 npm run worker
+
+# Run tests
+npm run test
+
+# Run tests in watch mode
+npm run test:watch
+
+# Run tests with coverage report
+npm run test:coverage
 ```
 
 Buka [http://localhost:3000](http://localhost:3000)
@@ -240,7 +257,18 @@ src/
 └── hooks/                   # React hooks
 
 supabase/
-└── migrations/              # SQL migrations (001-010)
+└── migrations/              # SQL migrations (001-011)
+
+tests/
+├── utils.test.ts            # Utility functions (cn)
+├── password.test.ts         # Password hashing/verification
+├── email-templates.test.ts  # Email templates (XSS-safe)
+├── whatsapp-templates.test.ts # WhatsApp templates
+├── certificate.test.ts      # Certificate/slug/rate-limiting
+├── validation.test.ts       # Zod schema validation (57 tests)
+├── types.test.ts            # TypeScript enums
+├── recaptcha.test.ts        # ReCAPTCHA verification
+└── api.integration.test.ts  # API endpoint tests (31 tests)
 
 worker/
 └── index.ts                 # Queue worker entry point
@@ -373,6 +401,96 @@ CMD ["npm", "run", "worker"]
 - Run migration `008_course_materials_storage.sql`
 - Check Supabase storage bucket exists
 - Verify file size < 500MB
+- Blocked extensions: php, jsp, exe, sh, svg, html
+
+## Testing
+
+This project has comprehensive test coverage with **207 tests** across 9 test files.
+
+### Test Categories
+
+| Test File | Tests | Coverage |
+|-----------|-------|----------|
+| `validation.test.ts` | 57 | Zod schema validation |
+| `api.integration.test.ts` | 31 | API endpoint behavior |
+| `certificate.test.ts` | 28 | Certificate generation, rate limiting |
+| `email-templates.test.ts` | 21 | Email templates, XSS prevention |
+| `types.test.ts` | 21 | TypeScript enum definitions |
+| `whatsapp-templates.test.ts` | 14 | WhatsApp message templates |
+| `recaptcha.test.ts` | 14 | ReCAPTCHA v3 verification |
+| `password.test.ts` | 11 | Password hashing/verification |
+| `utils.test.ts` | 10 | Utility functions |
+
+### Security Tests
+
+The test suite includes security-specific tests:
+
+- ✅ **IDOR Protection** - Payment ownership verification
+- ✅ **Authentication** - Protected endpoints reject unauthenticated users
+- ✅ **Authorization** - Admin endpoints reject non-admin users
+- ✅ **Input Validation** - All schemas tested with invalid inputs
+- ✅ **Password Strength** - 8+ chars, uppercase, lowercase, number required
+- ✅ **Email Enumeration** - Forgot-password doesn't reveal email existence
+- ✅ **Webhook Security** - Signature verification tested
+- ✅ **XSS Prevention** - Email templates escape HTML
+
+### Running Tests
+
+```bash
+# Run all tests
+npm run test
+
+# Watch mode for development
+npm run test:watch
+
+# Generate coverage report
+npm run test:coverage
+```
+
+Test reports are generated in `TEST_REPORT.md`.
+
+## Security
+
+This platform implements defense-in-depth security measures:
+
+### Authentication & Session
+- Password policy: 8+ characters, uppercase, lowercase, number required
+- bcrypt hashing with 12 rounds
+- JWT session expiry: 24 hours (reduced from default 30 days)
+- Google OAuth with profile verification
+
+### Database Security
+- Row Level Security (RLS) on all tables
+- Service role only for writes (admin client)
+- Application-layer ownership verification
+- Anon key can only read published content
+
+### API Security
+- Rate limiting: 100 requests/minute (Redis-backed in production)
+- Input validation with Zod schemas
+- IDOR prevention on sensitive endpoints
+- Webhook idempotency (prevents duplicate processing)
+
+### File Upload Security
+- Magic bytes validation (file signature verification)
+- Blocked dangerous extensions (php, jsp, exe, sh, svg)
+- Cryptographically secure random filenames
+- Path traversal prevention
+- 500MB size limit
+
+### Headers & CSP
+- Content-Security-Policy (CSP) with Midtrans integration
+- X-Frame-Options: DENY (clickjacking prevention)
+- X-Content-Type-Options: nosniff
+- Strict-Transport-Security (HSTS) in production
+- Referrer-Policy: strict-origin-when-cross-origin
+
+### Certificates
+- Cryptographically secure certificate numbers (crypto.randomBytes)
+- Timestamp + random bytes for uniqueness
+- Public verification endpoint
+
+See `SECURITY_AUDIT_REPORT.md`, `SECURITY_FIXES_APPLIED.md`, and `SECURITY_REVIEW_REPORT.md` for detailed security documentation.
 
 ## License
 

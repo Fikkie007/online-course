@@ -5,11 +5,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-npm run dev      # Start development server (http://localhost:3000)
-npm run build    # Build for production
-npm run start    # Start production server
-npm run lint     # Run ESLint
-npm run worker   # Start queue worker (requires Redis)
+npm run dev           # Start development server (http://localhost:3000)
+npm run build         # Build for production
+npm run start         # Start production server
+npm run lint          # Run ESLint
+npm run worker        # Start queue worker (requires Redis)
+npm run test          # Run tests once (Vitest)
+npm run test:watch    # Run tests in watch mode
+npm run test:coverage # Run tests with coverage report
 ```
 
 ## Architecture Overview
@@ -134,6 +137,136 @@ export function MyButton() {
 }
 ```
 
+### Security Patterns
+
+**IDOR Prevention:**
+Always verify ownership before returning sensitive data:
+```typescript
+// Get payment and verify ownership
+const { data: payment } = await supabase
+  .from('payments')
+  .select('id, student_id, status')
+  .eq('midtrans_order_id', orderId)
+  .single();
+
+if (payment.student_id !== user.id) {
+  return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+}
+```
+
+**Webhook Idempotency:**
+Use status check to prevent duplicate processing:
+```typescript
+// Only update if status is 'pending'
+const { data: updated } = await supabase
+  .from('payments')
+  .update(updateData)
+  .eq('id', payment.id)
+  .eq('status', 'pending') // IDEMPOTENCY KEY
+  .maybeSingle();
+
+if (!updated) {
+  // Already processed - safe to acknowledge
+  return NextResponse.json({ success: true, note: 'Already processed' });
+}
+```
+
+**File Upload Security:**
+```typescript
+// 1. Check extension blocklist
+const BLOCKED_EXTENSIONS = ['php', 'jsp', 'exe', 'sh', 'svg', 'html'];
+if (BLOCKED_EXTENSIONS.includes(extension)) return error;
+
+// 2. Validate MIME type whitelist
+const allowedTypes = ['image/jpeg', 'application/pdf', 'video/mp4'];
+
+// 3. Verify magic bytes (file signature)
+const signature = FILE_SIGNATURES[file.type];
+if (!validateFileSignature(buffer, file.type)) return error;
+
+// 4. Use crypto.randomBytes for filename
+const randomBytes = crypto.randomBytes(16).toString('hex');
+```
+
+**XSS Prevention in Templates:**
+```typescript
+function escapeHtml(text: string | null | undefined): string {
+  if (!text) return '';
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+```
+
+**Password Validation:**
+```typescript
+// Regex: 8+ chars, uppercase, lowercase, number
+const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
+```
+
+### Testing Patterns
+
+**Test Structure:**
+Tests are located in `tests/` directory, mirroring the source structure.
+
+**Mocking Supabase:**
+```typescript
+vi.mock('@/lib/supabase/admin', () => ({
+  createAdminClient: vi.fn(),
+}));
+
+// Create chainable mock
+mockSupabaseClient = {
+  from: vi.fn(() => mockSupabaseClient),
+  select: vi.fn(() => mockSupabaseClient),
+  eq: vi.fn(() => mockSupabaseClient),
+  single: vi.fn(),
+};
+vi.mocked(supabase.createAdminClient).mockReturnValue(mockSupababaseClient);
+```
+
+**Mocking Auth:**
+```typescript
+vi.mock('@/lib/auth', () => ({
+  getCurrentUser: vi.fn(),
+  isAdmin: vi.fn(),
+  isMentor: vi.fn(),
+}));
+
+vi.mocked(auth.getCurrentUser).mockResolvedValue({
+  id: 'user-123',
+  email: 'test@example.com',
+  role: 'student',
+});
+```
+
+**API Request Helper:**
+```typescript
+function createRequest(body: unknown, method = 'POST'): NextRequest {
+  return new NextRequest('http://localhost:3000/api/test', {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+}
+```
+
+**Security Test Example:**
+```typescript
+it('should prevent IDOR - user can only check own payments', async () => {
+  mockSupabaseClient.single.mockResolvedValueOnce({
+    data: { id: 'pay-1', student_id: 'other-user', status: 'pending' },
+    error: null,
+  });
+
+  const response = await GET(request);
+  expect(response.status).toBe(403); // Forbidden, not 404
+});
+```
+
 ### Database Migrations
 
 Run in order in Supabase SQL Editor:
@@ -141,7 +274,7 @@ Run in order in Supabase SQL Editor:
 | # | File | Purpose |
 |---|------|---------|
 | 001 | `initial_schema.sql` | All tables |
-| 002 | `rls_policies.sql` | Row Level Security |
+| 002 | `rls_policies.sql` | Row Level Security (replaced by 011) |
 | 003 | `functions.sql` | DB functions |
 | 004 | `fix_profiles_fk.sql` | NextAuth compatibility |
 | 005 | `notifications_table.sql` | Notifications log |
@@ -150,6 +283,7 @@ Run in order in Supabase SQL Editor:
 | 008 | `course_materials_storage.sql` | Storage bucket |
 | 009 | `add_password_auth.sql` | Password column |
 | 010 | `password_reset_tokens.sql` | Reset tokens |
+| 011 | `secure_rls_policies.sql` | **CRITICAL** Secure RLS (replaces 002) |
 
 ### Email Templates
 

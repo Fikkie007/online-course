@@ -73,7 +73,7 @@ export async function POST(request: NextRequest) {
       paymentStatus = 'pending';
     }
 
-    // Update payment
+    // Update payment - SECURITY: Use idempotent update with status check
     const updateData: Record<string, unknown> = {
       status: paymentStatus,
       payment_method: payment_type,
@@ -83,10 +83,27 @@ export async function POST(request: NextRequest) {
       updateData.paid_at = new Date().toISOString();
     }
 
-    await supabase
+    // IDEMPOTENCY: Only update if current status is 'pending'
+    // This prevents duplicate webhook processing
+    const { data: updatedPayment, error: updateError } = await supabase
       .from('payments')
       .update(updateData)
-      .eq('id', payment.id);
+      .eq('id', payment.id)
+      .eq('status', 'pending') // Critical: Only update pending payments
+      .select()
+      .maybeSingle();
+
+    if (updateError) {
+      console.error('Failed to update payment:', updateError);
+      // Still return success to prevent webhook retries for non-recoverable errors
+      return NextResponse.json({ success: true, note: 'Update failed but acknowledged' });
+    }
+
+    // If no rows updated, payment was already processed (idempotency check)
+    if (!updatedPayment) {
+      console.log('[Midtrans Webhook] Payment already processed:', order_id);
+      return NextResponse.json({ success: true, note: 'Already processed' });
+    }
 
     // Update enrollment if payment successful
     if (enrollmentStatus === 'active' && payment.enrollment) {

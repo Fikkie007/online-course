@@ -42,5 +42,5 @@ next-env.d.ts
 # Supabase
 .supabase
 
-# Test Report
-TEST_REPORT.md
+# Performance Report
+PERFORMANCE_REPORT.md

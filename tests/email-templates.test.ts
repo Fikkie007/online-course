@@ -42,11 +42,12 @@ describe('Email Templates', () => {
       expect(html).toContain('<strong></strong>');
     });
 
-    it('should handle special characters in name', () => {
+    it('should escape special characters in name (XSS prevention)', () => {
       const html = welcomeEmailTemplate({ name: 'John & Jane <test>' });
 
-      // Template doesn't escape HTML, so be aware of XSS potential
-      expect(html).toContain('John & Jane <test>');
+      // SECURITY: HTML should be escaped to prevent XSS
+      expect(html).toContain('John &amp; Jane &lt;test&gt;');
+      expect(html).not.toContain('John & Jane <test>'); // Raw HTML should NOT be present
     });
   });
 

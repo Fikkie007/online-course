@@ -1,6 +1,50 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getCurrentUser, isMentor, isAdmin } from '@/lib/auth';
+import crypto from 'crypto';
+
+// File signature (magic bytes) validation for security
+const FILE_SIGNATURES: Record<string, { bytes: number[]; offset?: number }> = {
+  'image/jpeg': { bytes: [0xFF, 0xD8, 0xFF] },
+  'image/png': { bytes: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A] },
+  'image/gif': { bytes: [0x47, 0x49, 0x46, 0x38] }, // GIF8
+  'application/pdf': { bytes: [0x25, 0x50, 0x44, 0x46] }, // %PDF
+  'video/mp4': { bytes: [0x00, 0x00, 0x00] }, // MP4 has various signatures, check ftyp later
+  'video/webm': { bytes: [0x1A, 0x45, 0xDF, 0xA3] },
+  'video/quicktime': { bytes: [0x00, 0x00, 0x00] }, // MOV has various signatures
+};
+
+// Dangerous file extensions that should never be allowed
+const BLOCKED_EXTENSIONS = [
+  'exe', 'bat', 'cmd', 'sh', 'php', 'phtml', 'php3', 'php4', 'php5', 'phar',
+  'jsp', 'jspx', 'asp', 'aspx', 'cgi', 'pl', 'py', 'rb', 'htaccess', 'htpasswd',
+  'html', 'htm', 'svg', 'svgz', // SVG can contain scripts
+];
+
+function validateFileSignature(buffer: Buffer, claimedType: string): boolean {
+  const signature = FILE_SIGNATURES[claimedType];
+  if (!signature) {
+    // For types without signature validation, allow but log warning
+    console.warn(`[Upload] No signature validation for type: ${claimedType}`);
+    return true;
+  }
+
+  const { bytes, offset = 0 } = signature;
+  for (let i = 0; i < bytes.length; i++) {
+    if (buffer[offset + i] !== bytes[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function sanitizeFilename(filename: string): string {
+  // Remove path traversal attempts and null bytes
+  return filename
+    .replace(/\.\./g, '')
+    .replace(/\0/g, '')
+    .replace(/[<>:"|?*\x00-\x1f]/g, '_');
+}
 
 // POST - Upload file to course-materials bucket
 export async function POST(request: NextRequest) {
@@ -23,7 +67,7 @@ export async function POST(request: NextRequest) {
 
     const formData = await request.formData();
     const file = formData.get('file') as File;
-    const folder = formData.get('folder') as string || 'general';
+    const folder = sanitizeFilename(formData.get('folder') as string || 'general');
 
     if (!file) {
       return NextResponse.json(
@@ -61,16 +105,33 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Generate unique filename
-    const timestamp = Date.now();
-    const randomStr = Math.random().toString(36).substring(2, 8);
-    const extension = file.name.split('.').pop();
-    const fileName = `${timestamp}-${randomStr}.${extension}`;
-    const filePath = `${folder}/${fileName}`;
+    // SECURITY: Check file extension against blocklist
+    const extension = file.name.split('.').pop()?.toLowerCase() || '';
+    if (BLOCKED_EXTENSIONS.includes(extension)) {
+      return NextResponse.json(
+        { success: false, error: 'File extension not allowed for security reasons' },
+        { status: 400 }
+      );
+    }
 
-    // Convert File to ArrayBuffer
+    // Convert File to ArrayBuffer for validation
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
+
+    // SECURITY: Validate file signature (magic bytes)
+    if (!validateFileSignature(buffer, file.type)) {
+      return NextResponse.json(
+        { success: false, error: 'File content does not match the claimed file type' },
+        { status: 400 }
+      );
+    }
+
+    // SECURITY: Generate cryptographically secure random filename
+    const timestamp = Date.now();
+    const randomBytes = crypto.randomBytes(16).toString('hex');
+    const safeExtension = extension.replace(/[^a-z0-9]/g, '');
+    const fileName = `${timestamp}-${randomBytes}.${safeExtension}`;
+    const filePath = `${folder}/${fileName}`;
 
     const supabase = createAdminClient();
 

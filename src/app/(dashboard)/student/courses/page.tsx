@@ -2,6 +2,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { getCurrentUser } from '@/lib/auth';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
+import Image from 'next/image';
 import { Button } from '@/components/ui/button';
 import { PaymentSyncButton } from '@/components/course/PaymentSyncButton';
 
@@ -157,10 +158,12 @@ export default async function StudentCoursesPage({ searchParams }: CoursesPagePr
               >
                 <div className="relative h-32 bg-muted">
                   {enrollment.course?.thumbnail_url ? (
-                    <img
+                    <Image
                       src={enrollment.course.thumbnail_url}
                       alt={enrollment.course.title}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                      fill
+                      sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+                      className="object-cover group-hover:scale-105 transition-transform duration-300"
                     />
                   ) : (
                     <div className="flex items-center justify-center h-full text-muted-foreground">

@@ -1,5 +1,6 @@
 import { createAdminClient } from '@/lib/supabase/admin';
 import { sendCompletionNotification } from '@/lib/queue';
+import crypto from 'crypto';
 
 interface GenerateCertificateParams {
   enrollmentId: string;
@@ -11,9 +12,10 @@ interface GenerateCertificateParams {
 
 function generateCertificateNumber(): string {
   const prefix = 'CERT';
+  // SECURITY: Use cryptographically secure random bytes instead of Math.random
   const timestamp = Date.now().toString(36).toUpperCase();
-  const random = Math.random().toString(36).substring(2, 6).toUpperCase();
-  return `${prefix}-${timestamp}-${random}`;
+  const randomBytes = crypto.randomBytes(4).toString('hex').toUpperCase();
+  return `${prefix}-${timestamp}-${randomBytes}`;
 }
 
 export async function generateCertificate(params: GenerateCertificateParams) {

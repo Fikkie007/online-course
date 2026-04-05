@@ -49,7 +49,9 @@ export function CourseCard({ course }: CourseCardProps) {
               src={course.thumbnail_url}
               alt={course.title}
               fill
+              sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
               className="object-cover group-hover:scale-105 transition-transform duration-300"
+              loading="lazy"
             />
           ) : (
             <div className="flex items-center justify-center h-full text-muted-foreground">
@@ -104,10 +106,12 @@ export function CourseCard({ course }: CourseCardProps) {
           {course.mentor && (
             <div className="flex items-center gap-2 mb-3">
               {course.mentor.avatar_url ? (
-                <img
+                <Image
                   src={course.mentor.avatar_url}
                   alt={course.mentor.full_name || 'Mentor'}
-                  className="w-6 h-6 rounded-full object-cover"
+                  width={24}
+                  height={24}
+                  className="rounded-full object-cover"
                 />
               ) : (
                 <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-primary text-xs font-medium">

@@ -21,7 +21,7 @@ const nextConfig = {
       bodySizeLimit: '2mb',
     },
     // External packages that should not be bundled by Next.js
-    serverComponentsExternalPackages: ['@supabase/supabase-js', '@supabase/ssr', 'midtrans-client'],
+    serverComponentsExternalPackages: ['@supabase/supabase-js', '@supabase/ssr', 'midtrans-client', 'ioredis'],
   },
 };
 

@@ -63,7 +63,6 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     async jwt({ token, account, profile, user }) {
       // Initial sign in from Credentials
       if (user) {
-        console.log('[Auth JWT] Credentials user:', { id: user.id, role: user.role });
         token.id = user.id;
         token.role = user.role;
         return token;
@@ -71,12 +70,6 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
       // OAuth login (Google)
       if (account && profile) {
-        console.log('[Auth JWT] Google OAuth login:', {
-          sub: profile.sub,
-          email: profile.email,
-          name: profile.name
-        });
-
         const supabase = createAdminClient();
 
         // Check if profile exists by Google sub
@@ -88,8 +81,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
         // If not found by sub, try by email (for users who might have different IDs)
         if (fetchError?.code === 'PGRST116') {
-          console.log('[Auth JWT] Profile not found by sub, checking by email...');
-          const { data: profileByEmail, error: emailError } = await supabase
+          const { data: profileByEmail } = await supabase
             .from('profiles')
             .select('*')
             .eq('email', profile.email!)
@@ -98,14 +90,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           if (profileByEmail) {
             existingProfile = profileByEmail;
             fetchError = null;
-            console.log('[Auth JWT] Found profile by email, ID:', profileByEmail.id);
           }
         }
 
         if (!existingProfile || fetchError?.code === 'PGRST116') {
           // No profile exists, create new one with Google's sub as ID
-          console.log('[Auth JWT] Creating new profile with Google sub:', profile.sub);
-
           const { error: insertError } = await supabase.from('profiles').insert({
             id: profile.sub!,
             email: profile.email!,
@@ -116,17 +105,13 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           });
 
           if (insertError) {
-            console.error('[Auth JWT] Failed to create profile:', insertError);
-          } else {
-            console.log('[Auth JWT] Profile created successfully');
+            console.error('[Auth] Failed to create profile');
           }
 
           token.id = profile.sub!;
           token.role = 'student';
         } else {
           // Profile exists, update info
-          console.log('[Auth JWT] Updating existing profile:', existingProfile.id);
-
           await supabase
             .from('profiles')
             .update({
@@ -146,7 +131,6 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       if (token) {
         session.user.id = token.id as string;
         session.user.role = token.role as string;
-        console.log('[Auth Session] Session created:', { id: token.id, role: token.role });
       }
       return session;
     },
@@ -157,6 +141,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   },
   session: {
     strategy: 'jwt',
+    maxAge: 24 * 60 * 60, // 1 day - reduced from default 30 days for security
   },
   secret: process.env.NEXTAUTH_SECRET!,
 });

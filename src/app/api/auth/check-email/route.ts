@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
 
     const { data: user, error } = await supabase
       .from('profiles')
-      .select('id, email, password_hash')
+      .select('id, email, has_password:password_hash') // Use computed column pattern
       .eq('email', email)
       .single();
 
@@ -29,11 +29,12 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Email exists, check if has password
+    // Email exists, check if has password (password_hash will be null or a string)
+    // We only need to know IF a password exists, not what it is
     return NextResponse.json({
       success: true,
       exists: true,
-      hasPassword: !!user.password_hash,
+      hasPassword: !!user.has_password,
     });
   } catch (error) {
     console.error('Check email error:', error);

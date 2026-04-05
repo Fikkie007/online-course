@@ -4,9 +4,15 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { hashPassword } from '@/lib/auth/password';
 import { verifyRecaptcha } from '@/lib/utils/recaptcha';
 
+// Password strength regex: min 8 chars, uppercase, lowercase, number
+const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
+
 const resetPasswordSchema = z.object({
   token: z.string().min(1, 'Token diperlukan'),
-  password: z.string().min(6, 'Password minimal 6 karakter'),
+  password: z
+    .string()
+    .min(8, 'Password minimal 8 karakter')
+    .regex(passwordRegex, 'Password harus mengandung huruf besar, huruf kecil, dan angka'),
   recaptchaToken: z.string().optional(),
 });
 

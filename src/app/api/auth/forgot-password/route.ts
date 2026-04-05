@@ -113,11 +113,11 @@ export async function POST(request: NextRequest) {
 
     if (!emailResult.success) {
       console.error('[Forgot Password] Failed to send email:', emailResult.error);
-      // For debugging, return the error (remove in production)
+      // SECURITY: Don't leak internal error details to client
+      // Still return success to prevent email enumeration
       return NextResponse.json({
-        success: false,
-        error: `Gagal mengirim email: ${JSON.stringify(emailResult.error)}`,
-        debug: process.env.NODE_ENV === 'development',
+        success: true,
+        message: 'Jika email terdaftar, link reset password akan dikirim.',
       });
     }
 
