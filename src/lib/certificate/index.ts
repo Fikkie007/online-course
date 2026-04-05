@@ -1,0 +1,1 @@
+export { generateCertificate } from './generator';
